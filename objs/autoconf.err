@@ -1,0 +1,33 @@
+
+
+----------------------------------------
+checking for C compiler
+
+
+----------------------------------------
+checking for gcc -pipe switch
+
+
+----------------------------------------
+checking for -Wl,-E switch
+
+
+----------------------------------------
+checking for gcc builtin atomic operations
+
+
+----------------------------------------
+checking for C99 variadic macros
+
+
+----------------------------------------
+checking for gcc variadic macros
+
+
+----------------------------------------
+checking for gcc builtin 64 bit byteswap
+
+
+----------------------------------------
+checking for unistd.h
+
