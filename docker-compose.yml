@@ -5,6 +5,12 @@ services:
     build:
       context: .
       dockerfile: ./Dockerfile
+    ports:
+      - 8000:80
+    # volumes:
+    #   -
+    networks:
+      - network
     restart: always
 
 networks:

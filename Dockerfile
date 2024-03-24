@@ -18,6 +18,7 @@ RUN /app/auto/configure --with-http_ssl_module --with-mail --with-stream \
 # RUN cp -r /app/src/ /app/objs/
 RUN make -j4
 RUN make install
+EXPOSE 80
 
-# ENTRYPOINT [ "/usr/local/nginx/sbin/nginx" ]
-ENTRYPOINT [ "sleep", "3600" ]
+CMD [ "/usr/local/nginx/sbin/nginx", "-g", "daemon off;" ]
+# ENTRYPOINT [ "sleep", "3600" ]
