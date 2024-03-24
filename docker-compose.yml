@@ -1,0 +1,11 @@
+version: '3.7'
+
+services:
+  proxy:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+
+networks:
+  network:
+    driver: bridge
