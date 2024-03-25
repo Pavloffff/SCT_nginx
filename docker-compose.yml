@@ -7,11 +7,14 @@ services:
       dockerfile: ./Dockerfile
     ports:
       - 8000:80
-    # volumes:
-    #   -
+    volumes:
+      - config:/usr/local/nginx/conf
     networks:
       - network
     restart: always
+
+volumes:
+  config:
 
 networks:
   network:
