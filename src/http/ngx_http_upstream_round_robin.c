@@ -10,6 +10,10 @@
 #include <ngx_http.h>
 
 
+/*
+    возвращает сумму значений tries для текущего пира и его следующего пира (если он есть)
+*/
+
 #define ngx_http_upstream_tries(p) ((p)->tries                                \
                                     + ((p)->next ? (p)->next->tries : 0))
 
@@ -28,8 +32,8 @@ static void ngx_http_upstream_empty_save_session(ngx_peer_connection_t *pc,
 
 
 ngx_int_t
-ngx_http_upstream_init_round_robin(ngx_conf_t *cf,
-    ngx_http_upstream_srv_conf_t *us)
+ngx_http_upstream_init_round_robin(ngx_conf_t *cf,                      // тут парсится upstream походу, cf это низкоуровневая конфига модуля
+    ngx_http_upstream_srv_conf_t *us)                                   // us это настройки блока upstream
 {
     ngx_url_t                      u;
     ngx_uint_t                     i, j, n, w, t;
@@ -37,17 +41,17 @@ ngx_http_upstream_init_round_robin(ngx_conf_t *cf,
     ngx_http_upstream_rr_peer_t   *peer, **peerp;
     ngx_http_upstream_rr_peers_t  *peers, *backup;
 
-    us->peer.init = ngx_http_upstream_init_round_robin_peer;
+    us->peer.init = ngx_http_upstream_init_round_robin_peer;            // запоминаем в upstream метод инициализации запроса
 
-    if (us->servers) {
-        server = us->servers->elts;
+    if (us->servers) {                                                  // сервера из upstream (если есть)
+        server = us->servers->elts;                                     // первый сервер
 
-        n = 0;
-        w = 0;
-        t = 0;
+        n = 0;                                                          // кол-во адресов
+        w = 0;                                                          // кол-во адресов с учетом веса
+        t = 0;                                                          // кол-во адресов с учетом работоспособности сервера
 
-        for (i = 0; i < us->servers->nelts; i++) {
-            if (server[i].backup) {
+        for (i = 0; i < us->servers->nelts; i++) {                      // идем по списку серверов
+            if (server[i].backup) {                                     // если является бэкапом, не учитываем
                 continue;
             }
 
@@ -60,61 +64,61 @@ ngx_http_upstream_init_round_robin(ngx_conf_t *cf,
         }
 
         if (n == 0) {
-            ngx_log_error(NGX_LOG_EMERG, cf->log, 0,
-                          "no servers in upstream \"%V\" in %s:%ui",
+            ngx_log_error(NGX_LOG_EMERG, cf->log, 0,                    // пример лога! логаем на файлик определенный в ngx_conf_t (тип ngx_log_t)
+                          "no servers in upstream \"%V\" in %s:%ui",    // типа ngx_log_error(NGX_LOG_ALERT, log, err, "kill(%P, %d) failed", pid, signo);
                           &us->host, us->file_name, us->line);
             return NGX_ERROR;
         }
 
-        peers = ngx_pcalloc(cf->pool, sizeof(ngx_http_upstream_rr_peers_t));
+        peers = ngx_pcalloc(cf->pool, sizeof(ngx_http_upstream_rr_peers_t));    // выделяем память для структуры, заполняем нулями
         if (peers == NULL) {
             return NGX_ERROR;
         }
 
-        peer = ngx_pcalloc(cf->pool, sizeof(ngx_http_upstream_rr_peer_t) * n);
+        peer = ngx_pcalloc(cf->pool, sizeof(ngx_http_upstream_rr_peer_t) * n);  // peer — объект, содержащий общие методы для инициализации конфигурации upstream
         if (peer == NULL) {
             return NGX_ERROR;
         }
-
-        peers->single = (n == 1);
-        peers->number = n;
-        peers->weighted = (w != n);
-        peers->total_weight = w;
-        peers->tries = t;
-        peers->name = &us->host;
+                                                                        // заполняем конфигу кластера адресов
+        peers->single = (n == 1);                                       // если кол-во адресов 1
+        peers->number = n;                                              // всего адресов
+        peers->weighted = (w != n);                                     // если у всех есть вес
+        peers->total_weight = w;                                        // всего адресов с учетом весов (на 1 адрес несколько запросов мб)
+        peers->tries = t;                                               // всего живых адресов
+        peers->name = &us->host;                                        // имя кластера (название upstream из конфиги)
 
         n = 0;
-        peerp = &peers->peer;
+        peerp = &peers->peer;                                           // начинаем с первого адреса
 
-        for (i = 0; i < us->servers->nelts; i++) {
-            if (server[i].backup) {
+        for (i = 0; i < us->servers->nelts; i++) {                      // идем по адресам серверам внутри upstream
+            if (server[i].backup) {                                     // запасные сервера скипаем
                 continue;
             }
 
-            for (j = 0; j < server[i].naddrs; j++) {
-                peer[n].sockaddr = server[i].addrs[j].sockaddr;
+            for (j = 0; j < server[i].naddrs; j++) {                    // идем по адресам сервера
+                peer[n].sockaddr = server[i].addrs[j].sockaddr;         // и всю дату копируем в кластер
                 peer[n].socklen = server[i].addrs[j].socklen;
                 peer[n].name = server[i].addrs[j].name;
-                peer[n].weight = server[i].weight;
+                peer[n].weight = server[i].weight;                      // сейчас effective_weight == weight
                 peer[n].effective_weight = server[i].weight;
-                peer[n].current_weight = 0;
+                peer[n].current_weight = 0;                             // а current_weight = 0
                 peer[n].max_conns = server[i].max_conns;
                 peer[n].max_fails = server[i].max_fails;
                 peer[n].fail_timeout = server[i].fail_timeout;
                 peer[n].down = server[i].down;
                 peer[n].server = server[i].name;
 
-                *peerp = &peer[n];
+                *peerp = &peer[n];                                      // переходим к следующему блоку в кластере
                 peerp = &peer[n].next;
-                n++;
+                n++;                                                    // n в конце станет кол-во скопированных адресов
             }
         }
 
-        us->peer.data = peers;
+        us->peer.data = peers;                                          // присваиваем чтобы был список только нужных адресов
 
         /* backup servers */
 
-        n = 0;
+        n = 0;                                                          // еще раз то же самое, делаем резервную копию списка адресов
         w = 0;
         t = 0;
 
@@ -135,7 +139,7 @@ ngx_http_upstream_init_round_robin(ngx_conf_t *cf,
             return NGX_OK;
         }
 
-        backup = ngx_pcalloc(cf->pool, sizeof(ngx_http_upstream_rr_peers_t));
+        backup = ngx_pcalloc(cf->pool, sizeof(ngx_http_upstream_rr_peers_t));   // не пон, как идет присвоение backup->peer = peer (мб оно внутри аллокатора)
         if (backup == NULL) {
             return NGX_ERROR;
         }
@@ -185,7 +189,7 @@ ngx_http_upstream_init_round_robin(ngx_conf_t *cf,
         return NGX_OK;
     }
 
-
+    // иначе у нас upstream - и есть проксируемый сервер
     /* an upstream implicitly defined by proxy_pass, etc. */
 
     if (us->port == 0) {
@@ -195,12 +199,12 @@ ngx_http_upstream_init_round_robin(ngx_conf_t *cf,
         return NGX_ERROR;
     }
 
-    ngx_memzero(&u, sizeof(ngx_url_t));
+    ngx_memzero(&u, sizeof(ngx_url_t));                                         // храним url из upstream
 
-    u.host = us->host;
+    u.host = us->host;                                                          
     u.port = us->port;
 
-    if (ngx_inet_resolve_host(cf->pool, &u) != NGX_OK) {
+    if (ngx_inet_resolve_host(cf->pool, &u) != NGX_OK) {                        // преобразование имени хоста в IP-адрес
         if (u.err) {
             ngx_log_error(NGX_LOG_EMERG, cf->log, 0,
                           "%s in upstream \"%V\" in %s:%ui",
@@ -210,9 +214,9 @@ ngx_http_upstream_init_round_robin(ngx_conf_t *cf,
         return NGX_ERROR;
     }
 
-    n = u.naddrs;
+    n = u.naddrs;                                                               // кол-во адресов для данного хоста
 
-    peers = ngx_pcalloc(cf->pool, sizeof(ngx_http_upstream_rr_peers_t));
+    peers = ngx_pcalloc(cf->pool, sizeof(ngx_http_upstream_rr_peers_t));        // далее то же самое
     if (peers == NULL) {
         return NGX_ERROR;
     }
@@ -254,13 +258,13 @@ ngx_http_upstream_init_round_robin(ngx_conf_t *cf,
 
 
 ngx_int_t
-ngx_http_upstream_init_round_robin_peer(ngx_http_request_t *r,
+ngx_http_upstream_init_round_robin_peer(ngx_http_request_t *r,                  // этот метод используется в других модулях (типа нашего)
     ngx_http_upstream_srv_conf_t *us)
 {
     ngx_uint_t                         n;
-    ngx_http_upstream_rr_peer_data_t  *rrp;
+    ngx_http_upstream_rr_peer_data_t  *rrp;                                     
 
-    rrp = r->upstream->peer.data;
+    rrp = r->upstream->peer.data;                                               // данные из запроса
 
     if (rrp == NULL) {
         rrp = ngx_palloc(r->pool, sizeof(ngx_http_upstream_rr_peer_data_t));
@@ -268,23 +272,29 @@ ngx_http_upstream_init_round_robin_peer(ngx_http_request_t *r,
             return NGX_ERROR;
         }
 
-        r->upstream->peer.data = rrp;
+        r->upstream->peer.data = rrp;                                           // если данных нет, создаем пустую дату из пула
     }
 
-    rrp->peers = us->peer.data;
+    rrp->peers = us->peer.data;                                                 // те самые данные, что получили в прошлом методе
     rrp->current = NULL;
     rrp->config = 0;
 
-    n = rrp->peers->number;
+    n = rrp->peers->number;                                                     // кол-во подключений
 
-    if (rrp->peers->next && rrp->peers->next->number > n) {
+    if (rrp->peers->next && rrp->peers->next->number > n) {                     // если есть backup
         n = rrp->peers->next->number;
     }
+
+    /*
+        tried отслеживает, какие серверы были уже испробованы. 
+        Если количество серверов меньше или равно количеству битов в uintptr_t, 
+        достаточно одного такого значения для отслеживания. 
+        Если серверов больше, требуется массив для их отслеживания.                                                                            
+    */
 
     if (n <= 8 * sizeof(uintptr_t)) {
         rrp->tried = &rrp->data;
         rrp->data = 0;
-
     } else {
         n = (n + (8 * sizeof(uintptr_t) - 1)) / (8 * sizeof(uintptr_t));
 
@@ -294,7 +304,7 @@ ngx_http_upstream_init_round_robin_peer(ngx_http_request_t *r,
         }
     }
 
-    r->upstream->peer.get = ngx_http_upstream_get_round_robin_peer;
+    r->upstream->peer.get = ngx_http_upstream_get_round_robin_peer;           // Устанавливаем методы для обработки
     r->upstream->peer.free = ngx_http_upstream_free_round_robin_peer;
     r->upstream->peer.tries = ngx_http_upstream_tries(rrp->peers);
 #if (NGX_HTTP_SSL)
@@ -307,10 +317,13 @@ ngx_http_upstream_init_round_robin_peer(ngx_http_request_t *r,
     return NGX_OK;
 }
 
+/*
+    По сути этот метод (ниже) - просто инициализация памяти, в которую балансировщик будет смотреть и следить за состоянием серверов
+*/
 
 ngx_int_t
-ngx_http_upstream_create_round_robin_peer(ngx_http_request_t *r,
-    ngx_http_upstream_resolved_t *ur)
+ngx_http_upstream_create_round_robin_peer(ngx_http_request_t *r,                // этот метод используется из ngx_http_upstream для выбора сервера
+    ngx_http_upstream_resolved_t *ur)                                           // методом round-robin
 {
     u_char                            *p;
     size_t                             len;
@@ -348,8 +361,8 @@ ngx_http_upstream_create_round_robin_peer(ngx_http_request_t *r,
     peers->tries = ur->naddrs;
     peers->name = &ur->host;
 
-    if (ur->sockaddr) {
-        peer[0].sockaddr = ur->sockaddr;
+    if (ur->sockaddr) {                                                         //  если есть сетевой адрес (разрешеннный). необходим только один пир.
+        peer[0].sockaddr = ur->sockaddr;                                        //  просто инициализируем
         peer[0].socklen = ur->socklen;
         peer[0].name = ur->name.data ? ur->name : ur->host;
         peer[0].weight = 1;
@@ -360,8 +373,8 @@ ngx_http_upstream_create_round_robin_peer(ngx_http_request_t *r,
         peer[0].fail_timeout = 10;
         peers->peer = peer;
 
-    } else {
-        peerp = &peers->peer;
+    } else {                                                                    // иначе идем по массиву адресов и инициализируем для всех пиров
+        peerp = &peers->peer;                   
 
         for (i = 0; i < ur->naddrs; i++) {
 
