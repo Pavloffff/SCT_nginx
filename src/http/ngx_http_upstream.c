@@ -6790,7 +6790,7 @@ ngx_http_upstream_init_main_conf(ngx_conf_t *cf, void *conf)
         init = uscfp[i]->peer.init_upstream ? uscfp[i]->peer.init_upstream:
                                             ngx_http_upstream_init_round_robin;
 
-        if (init(cf, uscfp[i]) != NGX_OK) {
+        if (init(cf, uscfp[i]) != NGX_OK) {                                                 // этот init вызывется из всех upstream-ов
             return NGX_CONF_ERROR;
         }
     }

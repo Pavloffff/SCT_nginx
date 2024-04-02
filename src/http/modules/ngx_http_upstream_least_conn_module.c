@@ -18,7 +18,7 @@ static char *ngx_http_upstream_least_conn(ngx_conf_t *cf, ngx_command_t *cmd,
     void *conf);
 
 
-static ngx_command_t  ngx_http_upstream_least_conn_commands[] = {
+static ngx_command_t  ngx_http_upstream_least_conn_commands[] = {                       // директива для использования этого модуля
 
     { ngx_string("least_conn"),
       NGX_HTTP_UPS_CONF|NGX_CONF_NOARGS,
@@ -63,8 +63,8 @@ ngx_module_t  ngx_http_upstream_least_conn_module = {
 
 
 static ngx_int_t
-ngx_http_upstream_init_least_conn(ngx_conf_t *cf,
-    ngx_http_upstream_srv_conf_t *us)
+ngx_http_upstream_init_least_conn(ngx_conf_t *cf,                           // 2 метода аналогичных round-robin
+    ngx_http_upstream_srv_conf_t *us)                                       // но с другими методами обработки
 {
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, cf->log, 0,
                    "init least conn");
@@ -111,7 +111,7 @@ ngx_http_upstream_get_least_conn_peer(ngx_peer_connection_t *pc, void *data)
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pc->log, 0,
                    "get least conn peer, try: %ui", pc->tries);
 
-    if (rrp->peers->single) {
+    if (rrp->peers->single) {                                               // если 1 адрес - аналогично round-robin
         return ngx_http_upstream_get_round_robin_peer(pc, rrp);
     }
 
@@ -164,14 +164,14 @@ ngx_http_upstream_get_least_conn_peer(ngx_peer_connection_t *pc, void *data)
          * based on round-robin
          */
 
-        if (best == NULL
-            || peer->conns * best->weight < best->conns * peer->weight)
+        if (best == NULL                                                         // выбираем адрес с минимальным
+            || peer->conns * best->weight < best->conns * peer->weight)          // кол-вом подключений
         {
             best = peer;
             many = 0;
             p = i;
 
-        } else if (peer->conns * best->weight == best->conns * peer->weight) {
+        } else if (peer->conns * best->weight == best->conns * peer->weight) {   // если есть много таких адресов
             many = 1;
         }
     }
@@ -183,7 +183,7 @@ ngx_http_upstream_get_least_conn_peer(ngx_peer_connection_t *pc, void *data)
         goto failed;
     }
 
-    if (many) {
+    if (many) {                                                                  // если много - выбираем как в round robin 
         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, pc->log, 0,
                        "get least conn peer, many");
 

@@ -114,11 +114,11 @@ ngx_http_upstream_init_round_robin(ngx_conf_t *cf,                      // ту�
             }
         }
 
-        us->peer.data = peers;                                          // присваиваем чтобы был список только нужных адресов
+        us->peer.data = peers;                                          // присваиваем в upstream итоговый список адресов
 
         /* backup servers */
 
-        n = 0;                                                          // еще раз то же самое, делаем резервную копию списка адресов
+        n = 0;                                                          // еще раз то же самое, для адресов backup серверов
         w = 0;
         t = 0;
 
@@ -428,7 +428,7 @@ ngx_http_upstream_create_round_robin_peer(ngx_http_request_t *r,                
         }
     }
 
-    r->upstream->peer.get = ngx_http_upstream_get_round_robin_peer;
+    r->upstream->peer.get = ngx_http_upstream_get_round_robin_peer;             // Устанавливаем методы для обработки
     r->upstream->peer.free = ngx_http_upstream_free_round_robin_peer;
     r->upstream->peer.tries = ngx_http_upstream_tries(rrp->peers);
 #if (NGX_HTTP_SSL)
@@ -441,9 +441,9 @@ ngx_http_upstream_create_round_robin_peer(ngx_http_request_t *r,                
 
 
 ngx_int_t
-ngx_http_upstream_get_round_robin_peer(ngx_peer_connection_t *pc, void *data)
+ngx_http_upstream_get_round_robin_peer(ngx_peer_connection_t *pc, void *data)   // получение текущего пира
 {
-    ngx_http_upstream_rr_peer_data_t  *rrp = data;
+    ngx_http_upstream_rr_peer_data_t  *rrp = data;                              // записываем его в data
 
     ngx_int_t                      rc;
     ngx_uint_t                     i, n;
@@ -459,7 +459,7 @@ ngx_http_upstream_get_round_robin_peer(ngx_peer_connection_t *pc, void *data)
     peers = rrp->peers;
     ngx_http_upstream_rr_peers_wlock(peers);
 
-    if (peers->single) {
+    if (peers->single) {                                                        // если 1 peer, просто выдаем его (если он есть)
         peer = peers->peer;
 
         if (peer->down) {
@@ -476,7 +476,7 @@ ngx_http_upstream_get_round_robin_peer(ngx_peer_connection_t *pc, void *data)
 
         /* there are several peers */
 
-        peer = ngx_http_upstream_get_peer(rrp);
+        peer = ngx_http_upstream_get_peer(rrp);                                 // иначе выбираем из спика согласно алгоритму round robin 
 
         if (peer == NULL) {
             goto failed;
@@ -532,7 +532,7 @@ failed:
 
 
 static ngx_http_upstream_rr_peer_t *
-ngx_http_upstream_get_peer(ngx_http_upstream_rr_peer_data_t *rrp)
+ngx_http_upstream_get_peer(ngx_http_upstream_rr_peer_data_t *rrp)               // выбра пира из списка
 {
     time_t                        now;
     uintptr_t                     m;
@@ -540,10 +540,10 @@ ngx_http_upstream_get_peer(ngx_http_upstream_rr_peer_data_t *rrp)
     ngx_uint_t                    i, n, p;
     ngx_http_upstream_rr_peer_t  *peer, *best;
 
-    now = ngx_time();
+    now = ngx_time();                                                           // текущее время
 
-    best = NULL;
-    total = 0;
+    best = NULL;                                                                // тот который  выберем
+    total = 0;                                                                  // суммарный    динамический вес
 
 #if (NGX_SUPPRESS_WARN)
     p = 0;
@@ -552,39 +552,39 @@ ngx_http_upstream_get_peer(ngx_http_upstream_rr_peer_data_t *rrp)
     for (peer = rrp->peers->peer, i = 0;
          peer;
          peer = peer->next, i++)
-    {
-        n = i / (8 * sizeof(uintptr_t));
-        m = (uintptr_t) 1 << i % (8 * sizeof(uintptr_t));
+    {                                                                           // смотрим с какимии узлами уже была попытка связи
+        n = i / (8 * sizeof(uintptr_t));                                        // индекс элемента в rrp->tried
+        m = (uintptr_t) 1 << i % (8 * sizeof(uintptr_t));                       // битовая маска (определяет была ли попытка)
 
-        if (rrp->tried[n] & m) {
+        if (rrp->tried[n] & m) {                                                // если попытка была, пропускаем
             continue;
         }
 
-        if (peer->down) {
+        if (peer->down) {                                                       // если узел мертвый
             continue;
         }
 
-        if (peer->max_fails
-            && peer->fails >= peer->max_fails
+        if (peer->max_fails                                                     // достиг ли узел максимального количества неудач 
+            && peer->fails >= peer->max_fails                                   // (max_fails) в течение определенного времени (fail_timeout)
             && now - peer->checked <= peer->fail_timeout)
         {
             continue;
         }
 
-        if (peer->max_conns && peer->conns >= peer->max_conns) {
+        if (peer->max_conns && peer->conns >= peer->max_conns) {                // проверка на максимум подключений
             continue;
         }
 
-        peer->current_weight += peer->effective_weight;
-        total += peer->effective_weight;
+        peer->current_weight += peer->effective_weight;                         // для возможности выбора текущий вес увеличиваем на динамически изменяемую версия веса
+        total += peer->effective_weight;                                        // суммарный вес
 
-        if (peer->effective_weight < peer->weight) {
+        if (peer->effective_weight < peer->weight) {                            // добавляем диннамически до веса, указанного в upstream
             peer->effective_weight++;
         }
 
-        if (best == NULL || peer->current_weight > best->current_weight) {
+        if (best == NULL || peer->current_weight > best->current_weight) {      // выбираем согласно весу
             best = peer;
-            p = i;
+            p = i;                                                              // номер выбранного
         }
     }
 
@@ -597,11 +597,11 @@ ngx_http_upstream_get_peer(ngx_http_upstream_rr_peer_data_t *rrp)
     n = p / (8 * sizeof(uintptr_t));
     m = (uintptr_t) 1 << p % (8 * sizeof(uintptr_t));
 
-    rrp->tried[n] |= m;
+    rrp->tried[n] |= m;                                                         // помечаем что попытка была
 
-    best->current_weight -= total;
+    best->current_weight -= total;                                              // вычитаем, чтобы у других узллов тоже был шанс на выбор
 
-    if (now - best->checked > best->fail_timeout) {
+    if (now - best->checked > best->fail_timeout) {                             // время выбора запоминаем в peer
         best->checked = now;
     }
 
@@ -610,8 +610,8 @@ ngx_http_upstream_get_peer(ngx_http_upstream_rr_peer_data_t *rrp)
 
 
 void
-ngx_http_upstream_free_round_robin_peer(ngx_peer_connection_t *pc, void *data,
-    ngx_uint_t state)
+ngx_http_upstream_free_round_robin_peer(ngx_peer_connection_t *pc, void *data,  // очистка памяти узла
+    ngx_uint_t state)                                                           // нигде не вызывается
 {
     ngx_http_upstream_rr_peer_data_t  *rrp = data;
 
