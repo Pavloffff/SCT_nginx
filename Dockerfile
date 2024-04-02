@@ -10,7 +10,7 @@ RUN microdnf install make
 WORKDIR /app
 COPY . .
 
-RUN /app/auto/configure --with-http_ssl_module --with-mail --with-stream --with-stream_realip_module --with-cpp_test_module --with-cc=gcc --with-cpp=gcc --with-cc-opt="-fPIC" --with-cpu-opt=cpu --with-pcre --with-debug --with-http_perl_module --add-module=/app/ngx_http_upstream_supercompteam_neuro_module
+RUN /app/auto/configure --with-http_ssl_module --with-mail --with-stream --with-stream_realip_module --with-cpp_test_module --with-cc=gcc --with-cpp=gcc --with-cc-opt="-fPIC" --with-cpu-opt=cpu --with-pcre --with-debug --with-http_perl_module --add-module=/app/ngx_http_upstream_sct_neuro_module
 
 RUN make -j4
 RUN make install
