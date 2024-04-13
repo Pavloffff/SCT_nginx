@@ -4,7 +4,7 @@ RUN apt-get update && apt-get install -y git
 
 WORKDIR /app
 
-RUN git clone https://github.com/sct/SCT_MOCK.git
+RUN git clone https://github.com/SUPERCOMPTEAM/SCT_MOCK.git
 
 RUN pip install -r /app/SCT_MOCK/requirements.txt
 
