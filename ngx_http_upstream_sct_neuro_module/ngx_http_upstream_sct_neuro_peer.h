@@ -1,12 +1,12 @@
-#ifndef NGX_HTTP_CUSTOM_UPSTREAM_RR_PEER_H
-#define NGX_HTTP_CUSTOM_UPSTREAM_RR_PEER_H
+#ifndef NGX_HTTP_UPSTREAM_SCT_NEURO_PEER_H
+#define NGX_HTTP_UPSTREAM_SCT_NEURO_PEER_H
 
 #include <ngx_config.h>
 #include <ngx_core.h>
 
-typedef struct ngx_http_custom_upstream_rr_peer_s   ngx_http_custom_upstream_rr_peer_t;
+typedef struct ngx_http_upstream_sct_neuro_peer_s  ngx_http_upstream_sct_neuro_peer_t;
 
-struct ngx_http_custom_upstream_rr_peer_s {
+struct ngx_http_upstream_sct_neuro_peer_s {
     struct sockaddr                *sockaddr;
     socklen_t                       socklen;
     ngx_str_t                       name;
@@ -43,21 +43,21 @@ struct ngx_http_custom_upstream_rr_peer_s {
     ngx_atomic_t                    lock;
 #endif
 
-    ngx_http_custom_upstream_rr_peer_t    *next;
+    ngx_http_upstream_sct_neuro_peer_t    *next;
 
     NGX_COMPAT_BEGIN(32)
     NGX_COMPAT_END
 };
 
-typedef struct ngx_http_custom_upstream_rr_peers_s  ngx_http_custom_upstream_rr_peers_t;
+typedef struct ngx_http_upstream_sct_neuro_peers_s  ngx_http_upstream_sct_neuro_peers_t;
 
-struct ngx_http_custom_upstream_rr_peers_s {
+struct ngx_http_upstream_sct_neuro_peers_s {
     ngx_uint_t                      number;
 
 #if (NGX_HTTP_UPSTREAM_ZONE)
     ngx_slab_pool_t                *shpool;
     ngx_atomic_t                    rwlock;
-    ngx_http_custom_upstream_rr_peers_t   *zone_next;
+    ngx_http_upstream_sct_neuro_peers_t   *zone_next;
 #endif
 
     ngx_uint_t                      total_weight;
@@ -68,15 +68,15 @@ struct ngx_http_custom_upstream_rr_peers_s {
 
     ngx_str_t                      *name;
 
-    ngx_http_custom_upstream_rr_peers_t   *next;
+    ngx_http_upstream_sct_neuro_peers_t   *next;
 
-    ngx_http_custom_upstream_rr_peer_t    *peer;
+    ngx_http_upstream_sct_neuro_peers_t    *peer;
 };
 
 typedef struct {
     ngx_uint_t                      config;
-    ngx_http_custom_upstream_rr_peers_t   *peers;
-    ngx_http_custom_upstream_rr_peer_t    *current;
+    ngx_http_upstream_sct_neuro_peers_t    *peers;
+    ngx_http_upstream_sct_neuro_peer_t     *current;
     uintptr_t                      *tried;
     uintptr_t                       data;
 
@@ -84,7 +84,7 @@ typedef struct {
     time_t                          start_iteration_time; //время последнего пересчета весов
     ngx_uint_t                      gap_in_requests; //промежуток (в запросах) через который пересчитываются веса.
 
-} ngx_http_custom_upstream_rr_peer_data_t;
+} ngx_http_upstream_sct_neuro_peer_data_t;
 
 //Пытаюсь изменить уже существующие типы данных под нас
 

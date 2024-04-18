@@ -1,5 +1,7 @@
 {
     "files.associations": {
-        "ngx_config.h": "c"
+        "ngx_config.h": "c",
+        "ngx_core.h": "c",
+        "ngx_http.h": "c"
     }
 }
