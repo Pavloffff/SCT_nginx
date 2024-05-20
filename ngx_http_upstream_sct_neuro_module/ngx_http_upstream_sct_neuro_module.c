@@ -598,17 +598,39 @@ ngx_http_upstream_get_sct_neuro_peer(ngx_peer_connection_t *pc, void *data)
 static ngx_http_upstream_rr_peer_t *
 ngx_http_upstream_get_peer_from_neuro(ngx_http_upstream_sct_neuro_peer_data_t *scp)               // выбра пира из списка
 {
-    time_t                        now;
     uintptr_t                     m;
-    ngx_int_t                     total;
-    ngx_uint_t                    i, n, p;
-    ngx_http_upstream_sct_neuro_peer_t  *peer, *best;
+    //ngx_int_t                     total;
+    ngx_uint_t                    i, n;
+    ngx_http_upstream_sct_neuro_peer_t  *peer; //*best;
     ngx_http_upstream_sct_neuro_peers_t *peers = scp->peers;
 
-    scp->nreq_since_last_weight_update;
-    scp->gap_in_requests;  
 
-    return best;
+    //if (scp->nreq_since_last_weight_update >= scp->gap_in_requests){
+         for (peer = rrp->peers->peer, i = 0; peer; peer = peer->next, i++)
+        {     
+            return peer;                                                                      // смотрим с какимии узлами уже была попытка связи
+            n = i / (8 * sizeof(uintptr_t));                                        // индекс элемента в rrp->tried
+            m = (uintptr_t) 1 << i % (8 * sizeof(uintptr_t));                       // битовая маска (определяет была ли попытка)
+
+            if (peer->down) {                                                       // если узел мертвый
+                continue;
+            }
+
+            if (peer->max_fails                                                     // достиг ли узел максимального количества неудач 
+                && peer->fails >= peer->max_fails                                   // (max_fails) в течение определенного времени (fail_timeout)
+                && now - peer->checked <= peer->fail_timeout)
+            {
+                continue;
+            }
+
+            if (peer->max_conns && peer->conns >= peer->max_conns) {                // проверка на максимум подключений
+                continue;
+            }
+        }                       
+        scp->nreq_since_last_weight_update = 0;
+    //}
+    scp->nreq_since_last_weight_update++;
+    //return best;
 }
 
 static void
