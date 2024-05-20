@@ -100,6 +100,7 @@ typedef struct {
     ngx_uint_t                               fails;
 } ngx_http_upstream_sct_neuro_shm_block_t;
 
+#define ngx_spinlock_unlock(lock)       (void) ngx_atomic_cmp_set(lock, ngx_pid, 0)
 
 static ngx_int_t ngx_http_sct_neuro_header_filter(ngx_http_request_t *r);
 static ngx_int_t ngx_http_sct_neuro_filter_init(ngx_conf_t *cf);
@@ -438,6 +439,7 @@ static ngx_int_t ngx_http_sct_neuro_header_filter(ngx_http_request_t *r) {
     ngx_http_upstream_sct_neuro_shm_block_t *block = NULL;
     // ngx_slab_pool_t *shpool;
     ngx_uint_t i, num_blocks;
+    ngx_atomic_t *lock;
 
     if (r->headers_out.status != NGX_HTTP_OK) {
         return ngx_http_next_header_filter(r);
@@ -460,15 +462,19 @@ static ngx_int_t ngx_http_sct_neuro_header_filter(ngx_http_request_t *r) {
         }
 
         if (block) {
-            // Добавляем заголовок X-Upstream-Addr
+            lock = &block->lock;
+            ngx_spinlock(lock, ngx_pid, 1024);
+            
             h = ngx_list_push(&r->headers_out.headers);
             if (h == NULL) {
+                ngx_spinlock_unlock(lock);
                 return NGX_ERROR;
             }
             h->hash = 1;
             ngx_str_set(&h->key, "X-Upstream-Addr");
             h->value.data = ngx_pnalloc(r->pool, block->addr.len + 1);
             if (h->value.data == NULL) {
+                ngx_spinlock_unlock(lock);
                 return NGX_ERROR;
             }
             ngx_memcpy(h->value.data, block->addr.data, block->addr.len);
@@ -478,12 +484,14 @@ static ngx_int_t ngx_http_sct_neuro_header_filter(ngx_http_request_t *r) {
             // Добавляем заголовок X-Upstream-Port
             h = ngx_list_push(&r->headers_out.headers);
             if (h == NULL) {
+                ngx_spinlock_unlock(lock);
                 return NGX_ERROR;
             }
             h->hash = 1;
             ngx_str_set(&h->key, "X-Upstream-Port");
             h->value.data = ngx_pnalloc(r->pool, NGX_INT_T_LEN);
             if (h->value.data == NULL) {
+                ngx_spinlock_unlock(lock);
                 return NGX_ERROR;
             }
             sin = (struct sockaddr_in *) r->upstream->peer.sockaddr;
@@ -492,12 +500,14 @@ static ngx_int_t ngx_http_sct_neuro_header_filter(ngx_http_request_t *r) {
             // Добавляем заголовок X-Upstream-nreq
             h = ngx_list_push(&r->headers_out.headers);
             if (h == NULL) {
+                ngx_spinlock_unlock(lock);
                 return NGX_ERROR;
             }
             h->hash = 1;
             ngx_str_set(&h->key, "X-Upstream-nreq");
             h->value.data = ngx_pnalloc(r->pool, NGX_INT_T_LEN);
             if (h->value.data == NULL) {
+                ngx_spinlock_unlock(lock);
                 return NGX_ERROR;
             }
             h->value.len = ngx_sprintf(h->value.data, "%ui", block->nreq) - h->value.data;
@@ -505,15 +515,18 @@ static ngx_int_t ngx_http_sct_neuro_header_filter(ngx_http_request_t *r) {
             // Добавляем заголовок X-Upstream-nres
             h = ngx_list_push(&r->headers_out.headers);
             if (h == NULL) {
+                ngx_spinlock_unlock(lock);
                 return NGX_ERROR;
             }
             h->hash = 1;
             ngx_str_set(&h->key, "X-Upstream-nres");
             h->value.data = ngx_pnalloc(r->pool, NGX_INT_T_LEN);
             if (h->value.data == NULL) {
+                ngx_spinlock_unlock(lock);
                 return NGX_ERROR;
             }
             h->value.len = ngx_sprintf(h->value.data, "%ui", block->nres) - h->value.data;
+            ngx_spinlock_unlock(lock);
         }
     }
 
