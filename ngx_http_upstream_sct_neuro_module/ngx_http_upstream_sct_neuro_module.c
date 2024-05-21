@@ -103,6 +103,9 @@ static ngx_int_t ngx_http_sct_neuro_filter_init(ngx_conf_t *cf);
 
 static ngx_int_t ngx_http_upstream_init_sct_neuro_peer(ngx_http_request_t *r,
     ngx_http_upstream_srv_conf_t *us);
+void
+ngx_http_upstream_free_sct_neuro_peer(ngx_peer_connection_t *pc, void *data, ngx_uint_t state);
+static ngx_http_upstream_rr_peer_t *ngx_http_upstream_get_peer(ngx_http_upstream_rr_peer_data_t *rrp);               // выбра пира из списка
 // static ngx_http_upstream_sct_neuro_peer_t *
 // ngx_http_upstream_get_peer_from_neuro(ngx_http_upstream_sct_neuro_peer_data_t *scp);
 static ngx_int_t ngx_http_upstream_get_sct_neuro_peer(
@@ -283,9 +286,159 @@ ngx_http_upstream_init_sct_neuro(ngx_conf_t *cf,
     // ngx_uint_t num_blocks = 0;
     // ngx_http_upstream_server_t *server;
 
-    if (ngx_http_upstream_init_round_robin(cf, us) != NGX_OK) {
-        return NGX_ERROR;
+    // if (ngx_http_upstream_init_round_robin(cf, us) != NGX_OK) {
+    //     return NGX_ERROR;
+    // }
+
+/*Раскрытие функции выше*/
+    ngx_uint_t                     i, j, n, w, t;
+    ngx_http_upstream_server_t    *server;
+    ngx_http_upstream_rr_peer_t   *peer, **peerp;
+    ngx_http_upstream_rr_peers_t  *peers, *backup;
+
+    us->peer.init = ngx_http_upstream_init_round_robin_peer;            // запоминаем в upstream метод инициализации запроса
+
+    if (us->servers) {                                                  // сервера из upstream (если есть)
+        server = us->servers->elts;                                     // первый сервер
+
+        n = 0;                                                          // кол-во адресов
+        w = 0;                                                          // кол-во адресов с учетом веса
+        t = 0;                                                          // кол-во адресов с учетом работоспособности сервера
+
+        for (i = 0; i < us->servers->nelts; i++) {                      // идем по списку серверов
+            if (server[i].backup) {                                     // если является бэкапом, не учитываем
+                continue;
+            }
+
+            n += server[i].naddrs;
+            w += server[i].naddrs * server[i].weight;
+
+            if (!server[i].down) {
+                t += server[i].naddrs;
+            }
+        }
+
+        if (n == 0) {
+            ngx_log_error(NGX_LOG_EMERG, cf->log, 0,                    // пример лога! логаем на файлик определенный в ngx_conf_t (тип ngx_log_t)
+                          "no servers in upstream \"%V\" in %s:%ui",    // типа ngx_log_error(NGX_LOG_ALERT, log, err, "kill(%P, %d) failed", pid, signo);
+                          &us->host, us->file_name, us->line);
+            return NGX_ERROR;
+        }
+
+        peers = ngx_pcalloc(cf->pool, sizeof(ngx_http_upstream_rr_peers_t));    // выделяем память для структуры, заполняем нулями
+        if (peers == NULL) {
+            return NGX_ERROR;
+        }
+
+        peer = ngx_pcalloc(cf->pool, sizeof(ngx_http_upstream_rr_peer_t) * n);  // peer — объект, содержащий общие методы для инициализации конфигурации upstream
+        if (peer == NULL) {
+            return NGX_ERROR;
+        }
+                                                                        // заполняем конфигу кластера адресов
+        peers->single = (n == 1);                                       // если кол-во адресов 1
+        peers->number = n;                                              // всего адресов
+        peers->weighted = (w != n);                                     // если у всех есть вес
+        peers->total_weight = w;                                        // всего адресов с учетом весов (на 1 адрес несколько запросов мб)
+        peers->tries = t;                                               // всего живых адресов
+        peers->name = &us->host;                                        // имя кластера (название upstream из конфиги)
+
+        n = 0;
+        peerp = &peers->peer;                                           // начинаем с первого адреса
+
+        for (i = 0; i < us->servers->nelts; i++) {                      // идем по адресам серверам внутри upstream
+            if (server[i].backup) {                                     // запасные сервера скипаем
+                continue;
+            }
+
+            for (j = 0; j < server[i].naddrs; j++) {                    // идем по адресам сервера
+                peer[n].sockaddr = server[i].addrs[j].sockaddr;         // и всю дату копируем в кластер
+                peer[n].socklen = server[i].addrs[j].socklen;
+                peer[n].name = server[i].addrs[j].name;
+                peer[n].weight = server[i].weight;                      // сейчас effective_weight == weight
+                peer[n].effective_weight = server[i].weight;
+                peer[n].current_weight = 0;                             // а current_weight = 0
+                peer[n].max_conns = server[i].max_conns;
+                peer[n].max_fails = server[i].max_fails;
+                peer[n].fail_timeout = server[i].fail_timeout;
+                peer[n].down = server[i].down;
+                peer[n].server = server[i].name;
+
+                *peerp = &peer[n];                                      // переходим к следующему блоку в кластере
+                peerp = &peer[n].next;
+                n++;                                                    // n в конце станет кол-во скопированных адресов
+            }
+        }
+
+        us->peer.data = peers;                                          // присваиваем в upstream итоговый список адресов
+
+        /* backup servers */
+
+        n = 0;                                                          // еще раз то же самое, для адресов backup серверов
+        w = 0;
+        t = 0;
+
+        for (i = 0; i < us->servers->nelts; i++) {
+            if (!server[i].backup) {
+                continue;
+            }
+
+            n += server[i].naddrs;
+            w += server[i].naddrs * server[i].weight;
+
+            if (!server[i].down) {
+                t += server[i].naddrs;
+            }
+        }
+
+        backup = ngx_pcalloc(cf->pool, sizeof(ngx_http_upstream_rr_peers_t));   // не пон, как идет присвоение backup->peer = peer (мб оно внутри аллокатора)
+        if (backup == NULL) {
+            return NGX_ERROR;
+        }
+
+        peer = ngx_pcalloc(cf->pool, sizeof(ngx_http_upstream_rr_peer_t) * n);
+        if (peer == NULL) {
+            return NGX_ERROR;
+        }
+
+        peers->single = 0;
+        backup->single = 0;
+        backup->number = n;
+        backup->weighted = (w != n);
+        backup->total_weight = w;
+        backup->tries = t;
+        backup->name = &us->host;
+
+        n = 0;
+        peerp = &backup->peer;
+
+        for (i = 0; i < us->servers->nelts; i++) {
+            if (!server[i].backup) {
+                continue;
+            }
+
+            for (j = 0; j < server[i].naddrs; j++) {
+                peer[n].sockaddr = server[i].addrs[j].sockaddr;
+                peer[n].socklen = server[i].addrs[j].socklen;
+                peer[n].name = server[i].addrs[j].name;
+                peer[n].weight = server[i].weight;
+                peer[n].effective_weight = server[i].weight;
+                peer[n].current_weight = 0;
+                peer[n].max_conns = server[i].max_conns;
+                peer[n].max_fails = server[i].max_fails;
+                peer[n].fail_timeout = server[i].fail_timeout;
+                peer[n].down = server[i].down;
+                peer[n].server = server[i].name;
+
+                *peerp = &peer[n];
+                peerp = &peer[n].next;
+                n++;
+            }
+        }
+
+        peers->next = backup;
     }
+/*Закрытие функции выше*/
+
     // ngx_url_t                      u;
     // ngx_uint_t                     i, j, n, w, t;
     // ngx_http_upstream_sct_neuro_peer_t   *peer, **peerp;
@@ -446,9 +599,65 @@ ngx_http_upstream_init_sct_neuro_peer(ngx_http_request_t *r,
     //                "init sct neuro peer");
 
 
-    if (ngx_http_upstream_init_round_robin_peer(r, us) != NGX_OK) {
-        return NGX_ERROR;
+    // if (ngx_http_upstream_init_round_robin_peer(r, us) != NGX_OK) {
+    //     return NGX_ERROR;
+    // }
+
+/*Раскрытие функции сверху*/
+    ngx_uint_t                         n;
+    ngx_http_upstream_rr_peer_data_t  *rrp;                                     
+
+    rrp = r->upstream->peer.data;                                               // данные из запроса
+
+    if (rrp == NULL) {
+        rrp = ngx_palloc(r->pool, sizeof(ngx_http_upstream_rr_peer_data_t));
+        if (rrp == NULL) {
+            return NGX_ERROR;
+        }
+
+        r->upstream->peer.data = rrp;                                           // если данных нет, создаем пустую дату из пула
     }
+
+    rrp->peers = us->peer.data;                                                 // те самые данные, что получили в прошлом методе
+    rrp->current = NULL;
+    rrp->config = 0;
+
+    n = rrp->peers->number;                                                     // кол-во подключений
+
+    if (rrp->peers->next && rrp->peers->next->number > n) {                     // если есть backup
+        n = rrp->peers->next->number;
+    }
+
+    /*
+        tried отслеживает, какие серверы были уже испробованы. 
+        Если количество серверов меньше или равно количеству битов в uintptr_t, 
+        достаточно одного такого значения для отслеживания. 
+        Если серверов больше, требуется массив для их отслеживания.                                                                            
+    */
+
+    if (n <= 8 * sizeof(uintptr_t)) {
+        rrp->tried = &rrp->data;
+        rrp->data = 0;
+    } else {
+        n = (n + (8 * sizeof(uintptr_t) - 1)) / (8 * sizeof(uintptr_t));
+
+        rrp->tried = ngx_pcalloc(r->pool, n * sizeof(uintptr_t));
+        if (rrp->tried == NULL) {
+            return NGX_ERROR;
+        }
+    }
+
+    r->upstream->peer.get = ngx_http_upstream_get_sct_neuro_peer;           // Устанавливаем методы для обработки
+    r->upstream->peer.free = ngx_http_upstream_free_sct_neuro_peer;
+    r->upstream->peer.tries = ngx_http_upstream_tries(rrp->peers);
+#if (NGX_HTTP_SSL)
+    r->upstream->peer.set_session =
+                               ngx_http_upstream_set_round_robin_peer_session;
+    r->upstream->peer.save_session =
+                               ngx_http_upstream_save_round_robin_peer_session;
+#endif
+/*Закрытие функции серху*/
+
 //     ngx_uint_t                         n;
 //     ngx_http_upstream_sct_neuro_peer_data_t  *scp;                                     
 
@@ -506,6 +715,79 @@ ngx_http_upstream_init_sct_neuro_peer(ngx_http_request_t *r,
     return NGX_OK;
 }
 
+void
+ngx_http_upstream_free_sct_neuro_peer(ngx_peer_connection_t *pc, void *data,  // очистка памяти узла
+    ngx_uint_t state)                                                           // нигде не вызывается
+{
+    ngx_http_upstream_rr_peer_data_t  *rrp = data;
+
+    time_t                       now;
+    ngx_http_upstream_rr_peer_t  *peer;
+
+    ngx_log_debug2(NGX_LOG_DEBUG_HTTP, pc->log, 0,
+                   "free rr peer %ui %ui", pc->tries, state);
+
+    /* TODO: NGX_PEER_KEEPALIVE */
+
+    peer = rrp->current;
+
+    ngx_http_upstream_rr_peers_rlock(rrp->peers);
+    ngx_http_upstream_rr_peer_lock(rrp->peers, peer);
+
+    if (rrp->peers->single) {
+
+        peer->conns--;
+
+        ngx_http_upstream_rr_peer_unlock(rrp->peers, peer);
+        ngx_http_upstream_rr_peers_unlock(rrp->peers);
+
+        pc->tries = 0;
+        return;
+    }
+
+    if (state & NGX_PEER_FAILED) {
+        now = ngx_time();
+
+        peer->fails++;
+        peer->accessed = now;
+        peer->checked = now;
+
+        if (peer->max_fails) {
+            peer->effective_weight -= peer->weight / peer->max_fails;
+
+            if (peer->fails >= peer->max_fails) {
+                ngx_log_error(NGX_LOG_WARN, pc->log, 0,
+                              "upstream server temporarily disabled");
+            }
+        }
+
+        ngx_log_debug2(NGX_LOG_DEBUG_HTTP, pc->log, 0,
+                       "free rr peer failed: %p %i",
+                       peer, peer->effective_weight);
+
+        if (peer->effective_weight < 0) {
+            peer->effective_weight = 0;
+        }
+
+    } else {
+
+        /* mark peer live if check passed */
+
+        if (peer->accessed < peer->checked) {
+            peer->fails = 0;
+        }
+    }
+
+    peer->conns--;
+
+    ngx_http_upstream_rr_peer_unlock(rrp->peers, peer);
+    ngx_http_upstream_rr_peers_unlock(rrp->peers);
+
+    if (pc->tries) {
+        pc->tries--;
+    }
+}
+
 
 static ngx_int_t
 ngx_http_upstream_get_sct_neuro_peer(ngx_peer_connection_t *pc, void *data)
@@ -536,8 +818,50 @@ ngx_http_upstream_get_sct_neuro_peer(ngx_peer_connection_t *pc, void *data)
     
 
 
-/*Говно начинается*/
-    return ngx_http_upstream_get_round_robin_peer(pc, scp);
+    //return ngx_http_upstream_get_round_robin_peer(pc, scp);
+
+/*Раскрытие функции выше*/
+    ngx_http_upstream_rr_peer_data_t  *rrp = scp;                              // записываем его в data
+
+    ngx_http_upstream_rr_peer_t   *peer;
+    ngx_http_upstream_rr_peers_t  *peers;
+
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pc->log, 0,
+                   "get rr peer, try: %ui", pc->tries);
+
+    pc->cached = 0;
+    pc->connection = NULL;
+
+    peers = rrp->peers;
+    ngx_http_upstream_rr_peers_wlock(peers);
+
+    if (peers->single) {                                                        // если 1 peer, просто выдаем его (если он есть)
+        peer = peers->peer;
+
+        rrp->current = peer;
+
+    } else {
+
+        /* there are several peers */
+
+        peer = ngx_http_upstream_get_peer(rrp);                                 // иначе выбираем из спика согласно алгоритму round robin 
+
+        ngx_log_debug2(NGX_LOG_DEBUG_HTTP, pc->log, 0,
+                       "get rr peer, current: %p %i",
+                       peer, peer->current_weight);
+    }
+
+    pc->sockaddr = peer->sockaddr;
+    pc->socklen = peer->socklen;
+    pc->name = &peer->name;
+
+    peer->conns++;
+
+    ngx_http_upstream_rr_peers_unlock(peers);
+
+    return NGX_OK;
+/*Закрытие функции выше*/
+
 //     ngx_http_upstream_sct_neuro_peer_t   *peer;
 //     ngx_http_upstream_sct_neuro_peers_t  *peers;
 
@@ -570,7 +894,83 @@ ngx_http_upstream_get_sct_neuro_peer(ngx_peer_connection_t *pc, void *data)
 //     ngx_http_upstream_rr_peers_unlock(peers);
 
 //     return NGX_OK;
-// /*Говно заканчивается*/
+}
+
+static ngx_http_upstream_rr_peer_t *
+ngx_http_upstream_get_peer(ngx_http_upstream_rr_peer_data_t *rrp)               // выбра пира из списка
+{
+    time_t                        now;
+    uintptr_t                     m;
+    ngx_int_t                     total;
+    ngx_uint_t                    i, n, p;
+    ngx_http_upstream_rr_peer_t  *peer, *best;
+
+    now = ngx_time();                                                           // текущее время
+
+    best = NULL;                                                                // тот который  выберем
+    total = 0;                                                                  // суммарный    динамический вес
+
+#if (NGX_SUPPRESS_WARN)
+    p = 0;
+#endif
+
+    for (peer = rrp->peers->peer, i = 0;
+         peer;
+         peer = peer->next, i++)
+    {                                                                           // смотрим с какимии узлами уже была попытка связи
+        n = i / (8 * sizeof(uintptr_t));                                        // индекс элемента в rrp->tried
+        m = (uintptr_t) 1 << i % (8 * sizeof(uintptr_t));                       // битовая маска (определяет была ли попытка)
+
+        if (rrp->tried[n] & m) {                                                // если попытка была, пропускаем
+            continue;
+        }
+
+        if (peer->down) {                                                       // если узел мертвый
+            continue;
+        }
+
+        if (peer->max_fails                                                     // достиг ли узел максимального количества неудач 
+            && peer->fails >= peer->max_fails                                   // (max_fails) в течение определенного времени (fail_timeout)
+            && now - peer->checked <= peer->fail_timeout)
+        {
+            continue;
+        }
+
+        if (peer->max_conns && peer->conns >= peer->max_conns) {                // проверка на максимум подключений
+            continue;
+        }
+
+        peer->current_weight += peer->effective_weight;                         // для возможности выбора текущий вес увеличиваем на динамически изменяемую версия веса
+        total += peer->effective_weight;                                        // суммарный вес
+
+        if (peer->effective_weight < peer->weight) {                            // добавляем диннамически до веса, указанного в upstream
+            peer->effective_weight++;
+        }
+
+        if (best == NULL || peer->current_weight > best->current_weight) {      // выбираем согласно весу
+            best = peer;
+            p = i;                                                              // номер выбранного
+        }
+    }
+
+    if (best == NULL) {
+        return NULL;
+    }
+
+    rrp->current = best;
+
+    n = p / (8 * sizeof(uintptr_t));
+    m = (uintptr_t) 1 << p % (8 * sizeof(uintptr_t));
+
+    rrp->tried[n] |= m;                                                         // помечаем что попытка была
+
+    best->current_weight -= total;                                              // вычитаем, чтобы у других узллов тоже был шанс на выбор
+
+    if (now - best->checked > best->fail_timeout) {                             // время выбора запоминаем в peer
+        best->checked = now;
+    }
+
+    return best;
 }
 
 // static ngx_http_upstream_sct_neuro_peer_t *
