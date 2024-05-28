@@ -81,13 +81,13 @@ typedef struct {
     ngx_http_upstream_sct_neuro_peer_t     *current;
     // uintptr_t                              *tried;
     uintptr_t                               data;
-    ngx_uint_t                              nreq_since_last_weight_update;          // количество запросов с последнего пересчёта весов
+    ngx_uint_t                              nreq_since_last_weight_update;
 } ngx_http_upstream_sct_neuro_peer_data_t;
 
 typedef struct {
     ngx_str_t                                addr;
     uintptr_t                                peers;
-    ngx_atomic_t                             lock;                                  // unsigned long
+    ngx_atomic_t                             lock;
     ngx_uint_t                               nreq;
     ngx_uint_t                               nres;
     ngx_uint_t                               fails;
@@ -98,7 +98,6 @@ typedef struct {
 
 static ngx_int_t ngx_http_sct_neuro_header_filter(ngx_http_request_t *r);
 static ngx_int_t ngx_http_sct_neuro_filter_init(ngx_conf_t *cf);
-
 
 static ngx_int_t ngx_http_upstream_init_sct_neuro_peer(ngx_http_request_t *r,
     ngx_http_upstream_srv_conf_t *us);
@@ -114,9 +113,9 @@ static ngx_int_t ngx_http_upstream_get_sct_neuro_peer(
 static char *ngx_http_upstream_sct_neuro(ngx_conf_t *cf, ngx_command_t *cmd,
     void *conf);
 static char *ngx_http_upstream_sct_neuro_set_shm_size(ngx_conf_t *cf,
-    ngx_command_t *cmd, void *conf);   
+    ngx_command_t *cmd, void *conf);
 static char *ngx_http_upstream_sct_neuro_set_gap_in_requests(ngx_conf_t *cf,
-    ngx_command_t *cmd, void *conf);   
+    ngx_command_t *cmd, void *conf);
 
 
 ngx_uint_t                              nreq_since_last_weight_update = 0; //TODO: перенести ее в shm
@@ -313,8 +312,6 @@ ngx_http_upstream_init_sct_neuro(ngx_conf_t *cf,
     ngx_http_upstream_server_t    *server;
     ngx_http_upstream_sct_neuro_peer_t   *peer, **peerp;
     ngx_http_upstream_sct_neuro_peers_t  *peers;
-
-    us->peer.init = ngx_http_upstream_init_round_robin_peer;
 
     if (us->servers) {
         

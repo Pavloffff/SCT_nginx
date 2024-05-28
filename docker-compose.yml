@@ -7,6 +7,7 @@ services:
       dockerfile: ./Dockerfile
     ports:
       - 8000:80
+      - 3306:3306
     volumes:
       - config:/usr/local/nginx/conf
     networks:
@@ -17,7 +18,31 @@ services:
       - mock_server3
       - mock_server4
       - mock_server5
+      - mock_db1
+      - mock_db2
     restart: always
+
+  mock_db1:
+    build: mysql
+    container_name: mock_db1
+    environment:
+      MYSQL_ROOT_PASSWORD: value
+    volumes:
+      - ./mysql/init1.sql:/docker-entrypoint-initdb.d/init.sql
+      - mock_db1_data:/var/lib/mysql
+    networks:
+      - network
+
+  mock_db2:
+    build: mysql
+    container_name: mock_db2
+    environment:
+      MYSQL_ROOT_PASSWORD: value
+    volumes:
+      - ./mysql/init2.sql:/docker-entrypoint-initdb.d/init.sql
+      - mock_db2_data:/var/lib/mysql
+    networks:
+      - network
 
   mock_server1:  
     build:
@@ -86,6 +111,8 @@ services:
 
 volumes:
   config:
+  mock_db1_data:
+  mock_db2_data:
 
 networks:
   network:

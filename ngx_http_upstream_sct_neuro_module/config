@@ -14,3 +14,20 @@ ngx_module_srcs="/app/ngx_http_upstream_sct_neuro_module/ngx_http_upstream_sct_n
 . auto/module
 
 ngx_addon_name=$ngx_module_name
+
+ngx_module_type=STREAM
+ngx_module_name=ngx_stream_upstream_sct_neuro_module
+ngx_module_srcs="/app/ngx_http_upstream_sct_neuro_module/ngx_stream_upstream_sct_neuro_module.c"
+
+. auto/module
+
+ngx_addon_name=$ngx_module_name
+
+
+ngx_module_type=STREAM
+ngx_module_name=ngx_stream_sct_neuro_filter_module
+ngx_module_srcs="/app/ngx_http_upstream_sct_neuro_module/ngx_stream_upstream_sct_neuro_module.c"
+
+. auto/module
+
+ngx_addon_name=$ngx_module_name
