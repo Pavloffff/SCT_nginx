@@ -818,33 +818,6 @@ ngx_stream_sct_neuro_filter(ngx_stream_session_t *s, ngx_chain_t *in,
     } else {
         c = s->upstream->peer.connection;
         out = &ctx->from_downstream;
-
-        blocks = (ngx_stream_upstream_sct_neuro_shm_block_t *) ngx_stream_upstream_sct_neuro_shm_zone->data;
-        num_blocks = ngx_stream_upstream_sct_neuro_shm_size / sizeof(ngx_stream_upstream_sct_neuro_shm_block_t);
-
-        for (i = 0; i < num_blocks; i++) {
-            if (ngx_strcmp(blocks[i].addr.data, s->upstream->peer.name->data) == 0) {
-                block = &blocks[i];
-                break;
-            }
-        }
-
-        if (block) {
-            lock = &block->lock;
-            ngx_spinlock(lock, ngx_pid, 1024);
-            
-            block->nres++;
-
-            ngx_log_debug2(NGX_LOG_DEBUG_EVENT, c->log, 0,
-                        "nreq: %d, nres: %d",
-                        block->nreq, block->nres);
-
-            ngx_spinlock_unlock(lock);
-        }
-
-        ngx_log_debug1(NGX_LOG_DEBUG_EVENT, c->log, 0,
-                        "upstream addr: %s",
-                        s->upstream->peer.name->data);
     }
 
     if (c->error) {
@@ -996,6 +969,35 @@ ngx_stream_sct_neuro_filter(ngx_stream_session_t *s, ngx_chain_t *in,
         if (cl->buf->last_buf) {
             last = 1;
         }
+    }
+
+    if (last) {
+        blocks = (ngx_stream_upstream_sct_neuro_shm_block_t *) ngx_stream_upstream_sct_neuro_shm_zone->data;
+        num_blocks = ngx_stream_upstream_sct_neuro_shm_size / sizeof(ngx_stream_upstream_sct_neuro_shm_block_t);
+
+        for (i = 0; i < num_blocks; i++) {
+            if (ngx_strcmp(blocks[i].addr.data, s->upstream->peer.name->data) == 0) {
+                block = &blocks[i];
+                break;
+            }
+        }
+
+        if (block) {
+            lock = &block->lock;
+            ngx_spinlock(lock, ngx_pid, 1024);
+            
+            block->nres++;
+
+            ngx_log_debug2(NGX_LOG_DEBUG_EVENT, c->log, 0,
+                        "\n\n\nnreq: %d, nres: %d",
+                        block->nreq, block->nres);
+
+            ngx_spinlock_unlock(lock);
+        }
+
+        ngx_log_debug1(NGX_LOG_DEBUG_EVENT, c->log, 0,
+                        "upstream addr: %s",
+                        s->upstream->peer.name->data);
     }
 
     *ll = NULL;
