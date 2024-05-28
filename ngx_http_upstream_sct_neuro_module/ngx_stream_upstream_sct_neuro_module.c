@@ -8,21 +8,92 @@
 #include <ngx_core.h>
 #include <ngx_stream.h>
 
+typedef struct ngx_stream_upstream_sct_neuro_peer_s   ngx_stream_upstream_sct_neuro_peer_t;
+
+struct ngx_stream_upstream_sct_neuro_peer_s {
+    struct sockaddr                 *sockaddr;
+    socklen_t                        socklen;
+    ngx_str_t                        name;
+    ngx_str_t                        server;
+
+    ngx_uint_t                       conns;
+    ngx_uint_t                       max_conns;
+
+    ngx_uint_t                       fails;
+    time_t                           accessed;
+    time_t                           checked;
+
+    ngx_uint_t                       max_fails;
+    time_t                           fail_timeout;
+    ngx_msec_t                       slow_start;
+    ngx_msec_t                       start_time;
+
+    ngx_uint_t                       down;
+
+    void                            *ssl_session;
+    int                              ssl_session_len;
+
+    ngx_uint_t                      cnt_requests;
+    ngx_uint_t                      cnt_responses;
+    double                          neuro_weight;
+
+#if (NGX_STREAM_UPSTREAM_ZONE)
+    ngx_atomic_t                     lock;
+#endif
+
+    ngx_stream_upstream_sct_neuro_peer_t   *next;
+
+    NGX_COMPAT_BEGIN(25)
+    NGX_COMPAT_END
+};
+
+
+typedef struct ngx_stream_upstream_sct_neuro_peers_s  ngx_stream_upstream_sct_neuro_peers_t;
+
+struct ngx_stream_upstream_sct_neuro_peers_s {
+    ngx_uint_t                       number;
+
+#if (NGX_STREAM_UPSTREAM_ZONE)
+    ngx_slab_pool_t                 *shpool;
+    ngx_atomic_t                     rwlock;
+    ngx_stream_upstream_sct_neuro_peers_t  *zone_next;
+#endif
+
+    ngx_uint_t                       tries;
+
+    unsigned                         single:1;
+
+    ngx_str_t                       *name;
+
+    ngx_stream_upstream_sct_neuro_peers_t  *next;
+
+    ngx_stream_upstream_sct_neuro_peer_t   *peer;
+};
+
+typedef struct {
+    ngx_uint_t                       config;
+    ngx_stream_upstream_sct_neuro_peers_t  *peers;
+    ngx_stream_upstream_sct_neuro_peer_t   *current;
+    uintptr_t                        data;
+} ngx_stream_upstream_sct_neuro_peer_data_t;
+
 typedef struct {
     ngx_str_t                                addr;
     uintptr_t                                peers;
-    ngx_atomic_t                             lock;                                  // unsigned long
+    ngx_atomic_t                             lock;
     ngx_uint_t                               nreq;
     ngx_uint_t                               nres;
     ngx_uint_t                               fails;
 } ngx_stream_upstream_sct_neuro_shm_block_t;
 
+#define ngx_spinlock_unlock(lock)       (void) ngx_atomic_cmp_set(lock, ngx_pid, 0)
+
 static ngx_int_t ngx_stream_upstream_init_sct_neuro_peer(
     ngx_stream_session_t *s, ngx_stream_upstream_srv_conf_t *us);
 static ngx_int_t ngx_stream_upstream_get_sct_neuro_peer(
     ngx_peer_connection_t *pc, void *data);
-static ngx_stream_upstream_rr_peer_t *ngx_stream_upstream_get_peer(
-    ngx_stream_upstream_rr_peer_data_t *rrp);
+static ngx_stream_upstream_sct_neuro_peer_t *ngx_stream_upstream_get_peer_from_neuro(
+    ngx_stream_upstream_sct_neuro_peer_data_t *rrp);
 static char *ngx_stream_upstream_sct_neuro(ngx_conf_t *cf, ngx_command_t *cmd,
     void *conf);
 
@@ -31,7 +102,7 @@ static char *ngx_stream_upstream_sct_neuro_set_shm_size(ngx_conf_t *cf,
 static char *ngx_stream_upstream_sct_neuro_set_gap_in_requests(ngx_conf_t *cf,
     ngx_command_t *cmd, void *conf);   
 
-// ngx_uint_t                              nreq_since_last_weight_update = 0;
+ngx_uint_t                              nreq_since_last_weight_update_stream = 0;
 
 static ngx_command_t  ngx_stream_upstream_sct_neuro_commands[] = {
 
@@ -198,8 +269,8 @@ ngx_stream_upstream_init_sct_neuro(ngx_conf_t *cf,
     ngx_url_t                        u;
     ngx_uint_t                       i, j, n, w, t;
     ngx_stream_upstream_server_t    *server;
-    ngx_stream_upstream_rr_peer_t   *peer, **peerp;
-    ngx_stream_upstream_rr_peers_t  *peers, *backup;
+    ngx_stream_upstream_sct_neuro_peer_t   *peer, **peerp;
+    ngx_stream_upstream_sct_neuro_peers_t  *peers;
 
     us->peer.init = ngx_stream_upstream_init_sct_neuro_peer;
 
@@ -230,20 +301,18 @@ ngx_stream_upstream_init_sct_neuro(ngx_conf_t *cf,
             return NGX_ERROR;
         }
 
-        peers = ngx_pcalloc(cf->pool, sizeof(ngx_stream_upstream_rr_peers_t));
+        peers = ngx_pcalloc(cf->pool, sizeof(ngx_stream_upstream_sct_neuro_peers_t));
         if (peers == NULL) {
             return NGX_ERROR;
         }
 
-        peer = ngx_pcalloc(cf->pool, sizeof(ngx_stream_upstream_rr_peer_t) * n);
+        peer = ngx_pcalloc(cf->pool, sizeof(ngx_stream_upstream_sct_neuro_peer_t) * n);
         if (peer == NULL) {
             return NGX_ERROR;
         }
 
         peers->single = (n == 1);
         peers->number = n;
-        peers->weighted = (w != n);
-        peers->total_weight = w;
         peers->tries = t;
         peers->name = &us->host;
 
@@ -259,14 +328,15 @@ ngx_stream_upstream_init_sct_neuro(ngx_conf_t *cf,
                 peer[n].sockaddr = server[i].addrs[j].sockaddr;
                 peer[n].socklen = server[i].addrs[j].socklen;
                 peer[n].name = server[i].addrs[j].name;
-                peer[n].weight = server[i].weight;
-                peer[n].effective_weight = server[i].weight;
-                peer[n].current_weight = 0;
                 peer[n].max_conns = server[i].max_conns;
                 peer[n].max_fails = server[i].max_fails;
                 peer[n].fail_timeout = server[i].fail_timeout;
                 peer[n].down = server[i].down;
                 peer[n].server = server[i].name;
+
+                peer[n].cnt_requests = 0;
+                peer[n].cnt_responses = 0;
+                peer[n].neuro_weight = 0.0;
 
                 *peerp = &peer[n];
                 peerp = &peer[n].next;
@@ -276,73 +346,7 @@ ngx_stream_upstream_init_sct_neuro(ngx_conf_t *cf,
 
         us->peer.data = peers;
 
-        /* backup servers */
-
-        n = 0;
-        w = 0;
-        t = 0;
-
-        for (i = 0; i < us->servers->nelts; i++) {
-            if (!server[i].backup) {
-                continue;
-            }
-
-            n += server[i].naddrs;
-            w += server[i].naddrs * server[i].weight;
-
-            if (!server[i].down) {
-                t += server[i].naddrs;
-            }
-        }
-
-        backup = ngx_pcalloc(cf->pool, sizeof(ngx_stream_upstream_rr_peers_t));
-        if (backup == NULL) {
-            return NGX_ERROR;
-        }
-
-        peer = ngx_pcalloc(cf->pool, sizeof(ngx_stream_upstream_rr_peer_t) * n);
-        if (peer == NULL) {
-            return NGX_ERROR;
-        }
-
-        peers->single = 0;
-        backup->single = 0;
-        backup->number = n;
-        backup->weighted = (w != n);
-        backup->total_weight = w;
-        backup->tries = t;
-        backup->name = &us->host;
-
-        n = 0;
-        peerp = &backup->peer;
-
-        for (i = 0; i < us->servers->nelts; i++) {
-            if (!server[i].backup) {
-                continue;
-            }
-
-            for (j = 0; j < server[i].naddrs; j++) {
-                peer[n].sockaddr = server[i].addrs[j].sockaddr;
-                peer[n].socklen = server[i].addrs[j].socklen;
-                peer[n].name = server[i].addrs[j].name;
-                peer[n].weight = server[i].weight;
-                peer[n].effective_weight = server[i].weight;
-                peer[n].current_weight = 0;
-                peer[n].max_conns = server[i].max_conns;
-                peer[n].max_fails = server[i].max_fails;
-                peer[n].fail_timeout = server[i].fail_timeout;
-                peer[n].down = server[i].down;
-                peer[n].server = server[i].name;
-
-                *peerp = &peer[n];
-                peerp = &peer[n].next;
-                n++;
-            }
-        }
-
-        peers->next = backup;
     } else {
-
 
         /* an upstream implicitly defined by proxy_pass, etc. */
 
@@ -370,20 +374,18 @@ ngx_stream_upstream_init_sct_neuro(ngx_conf_t *cf,
 
         n = u.naddrs;
 
-        peers = ngx_pcalloc(cf->pool, sizeof(ngx_stream_upstream_rr_peers_t));
+        peers = ngx_pcalloc(cf->pool, sizeof(ngx_stream_upstream_sct_neuro_peers_t));
         if (peers == NULL) {
             return NGX_ERROR;
         }
 
-        peer = ngx_pcalloc(cf->pool, sizeof(ngx_stream_upstream_rr_peer_t) * n);
+        peer = ngx_pcalloc(cf->pool, sizeof(ngx_stream_upstream_sct_neuro_peer_t) * n);
         if (peer == NULL) {
             return NGX_ERROR;
         }
 
         peers->single = (n == 1);
         peers->number = n;
-        peers->weighted = 0;
-        peers->total_weight = n;
         peers->tries = n;
         peers->name = &us->host;
 
@@ -393,9 +395,6 @@ ngx_stream_upstream_init_sct_neuro(ngx_conf_t *cf,
             peer[i].sockaddr = u.addrs[i].sockaddr;
             peer[i].socklen = u.addrs[i].socklen;
             peer[i].name = u.addrs[i].name;
-            peer[i].weight = 1;
-            peer[i].effective_weight = 1;
-            peer[i].current_weight = 0;
             peer[i].max_conns = 0;
             peer[i].max_fails = 1;
             peer[i].fail_timeout = 10;
@@ -437,14 +436,13 @@ ngx_stream_upstream_init_sct_neuro_peer(ngx_stream_session_t *s,
 
 /*Раскрываем функцию выше*/
 
-    ngx_uint_t                           n;
-    ngx_stream_upstream_rr_peer_data_t  *rrp;
+    ngx_stream_upstream_sct_neuro_peer_data_t  *rrp;
 
     rrp = s->upstream->peer.data;
 
     if (rrp == NULL) {
         rrp = ngx_palloc(s->connection->pool,
-                         sizeof(ngx_stream_upstream_rr_peer_data_t));
+                         sizeof(ngx_stream_upstream_sct_neuro_peer_data_t));
         if (rrp == NULL) {
             return NGX_ERROR;
         }
@@ -456,26 +454,26 @@ ngx_stream_upstream_init_sct_neuro_peer(ngx_stream_session_t *s,
     rrp->current = NULL;
     rrp->config = 0;
 
-    n = rrp->peers->number;
+    // n = rrp->peers->number;
 
-    if (rrp->peers->next && rrp->peers->next->number > n) {
-        n = rrp->peers->next->number;
-    }
+    // if (rrp->peers->next && rrp->peers->next->number > n) {
+    //     n = rrp->peers->next->number;
+    // }
 
-    if (n <= 8 * sizeof(uintptr_t)) {
-        rrp->tried = &rrp->data;
-        rrp->data = 0;
+    // if (n <= 8 * sizeof(uintptr_t)) {
+    //     rrp->tried = &rrp->data;
+    //     rrp->data = 0;
 
-    } else {
-        n = (n + (8 * sizeof(uintptr_t) - 1)) / (8 * sizeof(uintptr_t));
+    // } else {
+    //     n = (n + (8 * sizeof(uintptr_t) - 1)) / (8 * sizeof(uintptr_t));
 
-        rrp->tried = ngx_pcalloc(s->connection->pool, n * sizeof(uintptr_t));
-        if (rrp->tried == NULL) {
-            return NGX_ERROR;
-        }
-    }
+    //     rrp->tried = ngx_pcalloc(s->connection->pool, n * sizeof(uintptr_t));
+    //     if (rrp->tried == NULL) {
+    //         return NGX_ERROR;
+    //     }
+    // }
 
-    s->upstream->peer.get = ngx_stream_upstream_get_sct_neuro_peer;;
+    s->upstream->peer.get = ngx_stream_upstream_get_sct_neuro_peer;
     // s->upstream->peer.free = ngx_stream_upstream_free_round_robin_peer;
     // s->upstream->peer.notify = ngx_stream_upstream_notify_round_robin_peer;
     // s->upstream->peer.tries = ngx_stream_upstream_tries(rrp->peers);
@@ -488,7 +486,7 @@ ngx_stream_upstream_init_sct_neuro_peer(ngx_stream_session_t *s,
 
 /*Закрываем функцию выше*/
 
-    s->upstream->peer.get = ngx_stream_upstream_get_sct_neuro_peer;
+    // s->upstream->peer.get = ngx_stream_upstream_get_sct_neuro_peer;
 
     return NGX_OK;
 }
@@ -496,18 +494,18 @@ ngx_stream_upstream_init_sct_neuro_peer(ngx_stream_session_t *s,
 static ngx_int_t
 ngx_stream_upstream_get_sct_neuro_peer(ngx_peer_connection_t *pc, void *data)
 {
-    //ngx_stream_upstream_rr_peer_data_t *rrp = data;
+    // ngx_stream_upstream_sct_neuro_peer_data_t *rrp = data;
 
     // return ngx_stream_upstream_get_round_robin_peer(pc, rrp);
 
 /*Раскрываем функцию выше*/
 
-    ngx_stream_upstream_rr_peer_data_t *rrp = data;
+    ngx_stream_upstream_sct_neuro_peer_data_t *rrp = data;
 
     ngx_int_t                        rc;
-    ngx_uint_t                       i, n;
-    ngx_stream_upstream_rr_peer_t   *peer;
-    ngx_stream_upstream_rr_peers_t  *peers;
+    // ngx_uint_t                       i;
+    ngx_stream_upstream_sct_neuro_peer_t   *peer;
+    ngx_stream_upstream_sct_neuro_peers_t  *peers;
 
     ngx_log_debug1(NGX_LOG_DEBUG_STREAM, pc->log, 0,
                    "get rr peer, try: %ui", pc->tries);
@@ -534,15 +532,15 @@ ngx_stream_upstream_get_sct_neuro_peer(ngx_peer_connection_t *pc, void *data)
 
         /* there are several peers */
 
-        peer = ngx_stream_upstream_get_peer(rrp);
+        peer = ngx_stream_upstream_get_peer_from_neuro(rrp);
 
         if (peer == NULL) {
             goto failed;
         }
 
-        ngx_log_debug2(NGX_LOG_DEBUG_STREAM, pc->log, 0,
-                       "get rr peer, current: %p %i",
-                       peer, peer->current_weight);
+        // ngx_log_debug2(NGX_LOG_DEBUG_STREAM, pc->log, 0,
+        //                "get rr peer, current: %p %i",
+        //                peer, peer->current_weight);
     }
 
     pc->sockaddr = peer->sockaddr;
@@ -563,12 +561,12 @@ failed:
 
         rrp->peers = peers->next;
 
-        n = (rrp->peers->number + (8 * sizeof(uintptr_t) - 1))
-                / (8 * sizeof(uintptr_t));
+        // n = (rrp->peers->number + (8 * sizeof(uintptr_t) - 1))
+        //         / (8 * sizeof(uintptr_t));
 
-        for (i = 0; i < n; i++) {
-            rrp->tried[i] = 0;
-        }
+        // for (i = 0; i < n; i++) {
+        //     rrp->tried[i] = 0;
+        // }
 
         ngx_stream_upstream_rr_peers_unlock(peers);
 
@@ -592,36 +590,50 @@ failed:
 
 /*Новая функция так как она используется при раскрытии сверху*/
 
-static ngx_stream_upstream_rr_peer_t *
-ngx_stream_upstream_get_peer(ngx_stream_upstream_rr_peer_data_t *rrp)
+static ngx_stream_upstream_sct_neuro_peer_t *
+ngx_stream_upstream_get_peer_from_neuro(ngx_stream_upstream_sct_neuro_peer_data_t *rrp)
 {
     time_t                          now;
-    uintptr_t                       m;
-    ngx_int_t                       total;
-    ngx_uint_t                      i, n, p;
-    ngx_stream_upstream_rr_peer_t  *peer, *best;
+    ngx_uint_t                      i, num_blocks;
+    ngx_stream_upstream_sct_neuro_peer_t  *peer, *best;
 
     now = ngx_time();
 
     best = NULL;
-    total = 0;
 
-#if (NGX_SUPPRESS_WARN)
-    p = 0;
-#endif
+    ngx_stream_upstream_sct_neuro_shm_block_t *blocks;
+    ngx_stream_upstream_sct_neuro_shm_block_t *block = NULL;
+
+    blocks = (ngx_stream_upstream_sct_neuro_shm_block_t *) ngx_stream_upstream_sct_neuro_shm_zone->data;
+    num_blocks = ngx_stream_upstream_sct_neuro_shm_size / sizeof(ngx_stream_upstream_sct_neuro_shm_block_t);
+
+    srand48(time(NULL));
 
     for (peer = rrp->peers->peer, i = 0;
          peer;
          peer = peer->next, i++)
     {
-        n = i / (8 * sizeof(uintptr_t));
-        m = (uintptr_t) 1 << i % (8 * sizeof(uintptr_t));
+        // n = i / (8 * sizeof(uintptr_t));
+        // m = (uintptr_t) 1 << i % (8 * sizeof(uintptr_t));
 
-        if (rrp->tried[n] & m) {
+        // if (rrp->tried[n] & m) {
+        //     continue;
+        // }
+
+        for (i = 0; i < num_blocks; i++) {
+            if (ngx_strcmp(blocks[i].addr.data, peer->name.data) == 0) {
+                block = &blocks[i];
+                break;
+            }
+        }
+        if (!block) {
             continue;
         }
 
+        ngx_spinlock(&block->lock, ngx_pid, 1024);
+
         if (peer->down) {
+            ngx_spinlock_unlock(&block->lock);
             continue;
         }
 
@@ -629,23 +641,62 @@ ngx_stream_upstream_get_peer(ngx_stream_upstream_rr_peer_data_t *rrp)
             && peer->fails >= peer->max_fails
             && now - peer->checked <= peer->fail_timeout)
         {
+            ngx_spinlock_unlock(&block->lock);
             continue;
         }
 
         if (peer->max_conns && peer->conns >= peer->max_conns) {
+            ngx_spinlock_unlock(&block->lock);
             continue;
         }
 
-        peer->current_weight += peer->effective_weight;
-        total += peer->effective_weight;
+        // peer->current_weight += peer->effective_weight;
+        // total += peer->effective_weight;
 
-        if (peer->effective_weight < peer->weight) {
-            peer->effective_weight++;
-        }
+        // if (peer->effective_weight < peer->weight) {
+        //     peer->effective_weight++;
+        // }
 
-        if (best == NULL || peer->current_weight > best->current_weight) {
+        peer->cnt_requests = block->nreq;
+        peer->cnt_responses = block->nres;
+
+        if (best == NULL) {
             best = peer;
-            p = i;
+        }
+        ngx_spinlock_unlock(&block->lock);
+    }
+
+    if (nreq_since_last_weight_update_stream >= ngx_stream_upstream_sct_neuro_gap_in_requests) {
+        nreq_since_last_weight_update_stream = 0;
+    } else {
+        nreq_since_last_weight_update_stream++;
+    }
+    if (nreq_since_last_weight_update_stream == 0) {
+        for (peer = rrp->peers->peer, i = 0;
+            peer;
+            peer = peer->next, i++)
+        {
+            peer->neuro_weight = drand48();
+        }
+    }  
+
+    // choose best peer
+    for (peer = rrp->peers->peer, i = 0;
+         peer;
+         peer = peer->next, i++)
+    {
+        if (peer->neuro_weight > best->neuro_weight) {
+            best = peer;
+        }
+    }
+
+    for (i = 0; i < num_blocks; i++) {
+        if (ngx_strcmp(blocks[i].addr.data, best->name.data) == 0) {
+            block = &blocks[i];
+            ngx_spinlock(&block->lock, ngx_pid, 1024);
+            block->nreq++;
+            ngx_spinlock_unlock(&block->lock);
+            break;
         }
     }
 
@@ -655,12 +706,12 @@ ngx_stream_upstream_get_peer(ngx_stream_upstream_rr_peer_data_t *rrp)
 
     rrp->current = best;
 
-    n = p / (8 * sizeof(uintptr_t));
-    m = (uintptr_t) 1 << p % (8 * sizeof(uintptr_t));
+    // n = p / (8 * sizeof(uintptr_t));
+    // m = (uintptr_t) 1 << p % (8 * sizeof(uintptr_t));
 
-    rrp->tried[n] |= m;
+    // rrp->tried[n] |= m;
 
-    best->current_weight -= total;
+    // best->current_weight -= total;
 
     if (now - best->checked > best->fail_timeout) {
         best->checked = now;
@@ -743,7 +794,10 @@ ngx_stream_sct_neuro_filter(ngx_stream_session_t *s, ngx_chain_t *in,
     // ngx_chain_t                   *cl;
     // ngx_connection_t              *c;
     // ngx_stream_sct_neuro_filter_ctx_t *ctx;
-
+    ngx_stream_upstream_sct_neuro_shm_block_t *blocks;
+    ngx_stream_upstream_sct_neuro_shm_block_t *block = NULL;
+    ngx_uint_t i, num_blocks;
+    ngx_atomic_t *lock;
 
     ctx = ngx_stream_get_module_ctx(s, ngx_stream_sct_neuro_filter_module);
 
@@ -764,6 +818,29 @@ ngx_stream_sct_neuro_filter(ngx_stream_session_t *s, ngx_chain_t *in,
     } else {
         c = s->upstream->peer.connection;
         out = &ctx->from_downstream;
+
+        blocks = (ngx_stream_upstream_sct_neuro_shm_block_t *) ngx_stream_upstream_sct_neuro_shm_zone->data;
+        num_blocks = ngx_stream_upstream_sct_neuro_shm_size / sizeof(ngx_stream_upstream_sct_neuro_shm_block_t);
+
+        for (i = 0; i < num_blocks; i++) {
+            if (ngx_strcmp(blocks[i].addr.data, s->upstream->peer.name->data) == 0) {
+                block = &blocks[i];
+                break;
+            }
+        }
+
+        if (block) {
+            lock = &block->lock;
+            ngx_spinlock(lock, ngx_pid, 1024);
+            
+            block->nres++;
+
+            ngx_log_debug2(NGX_LOG_DEBUG_EVENT, c->log, 0,
+                        "nreq: %d, nres: %d",
+                        block->nreq, block->nres);
+
+            ngx_spinlock_unlock(lock);
+        }
 
         ngx_log_debug1(NGX_LOG_DEBUG_EVENT, c->log, 0,
                         "upstream addr: %s",

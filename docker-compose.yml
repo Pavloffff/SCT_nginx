@@ -83,7 +83,7 @@ services:
     networks:
       - network  
 
-  mock_server4:  
+  mock_server4:
     build:
       context: .
       dockerfile: ./mock.dockerfile  

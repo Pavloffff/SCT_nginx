@@ -81,7 +81,7 @@ typedef struct {
     ngx_http_upstream_sct_neuro_peer_t     *current;
     // uintptr_t                              *tried;
     uintptr_t                               data;
-    ngx_uint_t                              nreq_since_last_weight_update;
+    // ngx_uint_t                              nreq_since_last_weight_update;
 } ngx_http_upstream_sct_neuro_peer_data_t;
 
 typedef struct {
@@ -434,7 +434,7 @@ ngx_http_upstream_init_sct_neuro_peer(ngx_http_request_t *r,
     rrp->current = NULL;
     rrp->config = 0;
 
-    rrp->nreq_since_last_weight_update = 0;
+    // rrp->nreq_since_last_weight_update = 0;
 
     // n = rrp->peers->number;
 
@@ -592,8 +592,8 @@ ngx_http_upstream_get_sct_neuro_peer(ngx_peer_connection_t *pc, void *data)
     } else {
         /* there are several peers */
         peer = ngx_http_upstream_get_peer_from_neuro(rrp);
-        ngx_log_debug2(NGX_LOG_DEBUG_HTTP, pc->log, 0,
-                   "\n\n\n nreq: %ui, gap: %ui", rrp->nreq_since_last_weight_update, ngx_http_upstream_sct_neuro_gap_in_requests);
+        // ngx_log_debug2(NGX_LOG_DEBUG_HTTP, pc->log, 0,
+        //            "\n\n\n nreq: %ui, gap: %ui", rrp->nreq_since_last_weight_update, ngx_http_upstream_sct_neuro_gap_in_requests);
     }
 
     pc->sockaddr = peer->sockaddr;
