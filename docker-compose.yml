@@ -13,6 +13,7 @@ services:
     networks:
       - network
     depends_on:
+      - recalculator
       - mock_server1
       - mock_server2
       - mock_server3
@@ -21,6 +22,17 @@ services:
       - mock_db1
       - mock_db2
     restart: always
+
+  recalculator:
+    container_name: recalculator
+    build: recalculator
+    ports:
+      - "7998:7998"
+    volumes:
+      - ./recalculator/weights:/src/weights
+    networks:
+      - network
+    restart: on-failure
 
   mock_db1:
     build: mysql

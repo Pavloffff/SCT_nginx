@@ -9,6 +9,13 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <netdb.h>
 
 typedef struct ngx_http_upstream_sct_neuro_peer_s   ngx_http_upstream_sct_neuro_peer_t;
 
@@ -578,6 +585,9 @@ ngx_http_upstream_get_sct_neuro_peer(ngx_peer_connection_t *pc, void *data)
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pc->log, 0,
                    "get rr peer, try: %ui", pc->tries);
 
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pc->log, 0,
+                   "\n\n\nno of peers: %ui\n\n\n", rrp->peers->number);
+
     pc->cached = 0;
     pc->connection = NULL;
 
@@ -610,9 +620,12 @@ ngx_http_upstream_get_sct_neuro_peer(ngx_peer_connection_t *pc, void *data)
 static ngx_http_upstream_sct_neuro_peer_t *
 ngx_http_upstream_get_peer_from_neuro(ngx_http_upstream_sct_neuro_peer_data_t *rrp)
 {
-    time_t                        now;
-    ngx_uint_t                    i, num_blocks;
+    int                                 sock;
+    time_t                              now;
+    struct sockaddr_in                  server;
+    ngx_uint_t                          i, num_blocks;
     ngx_http_upstream_sct_neuro_peer_t  *peer, *best;
+    struct hostent                      *host;
     now = ngx_time();
     best = NULL;
 
@@ -621,8 +634,6 @@ ngx_http_upstream_get_peer_from_neuro(ngx_http_upstream_sct_neuro_peer_data_t *r
 
     blocks = (ngx_http_upstream_sct_neuro_shm_block_t *) ngx_http_upstream_sct_neuro_shm_zone->data;
     num_blocks = ngx_http_upstream_sct_neuro_shm_size / sizeof(ngx_http_upstream_sct_neuro_shm_block_t);
-    
-    srand48(time(NULL));
 
     for (peer = rrp->peers->peer, i = 0;
          peer;
@@ -657,7 +668,6 @@ ngx_http_upstream_get_peer_from_neuro(ngx_http_upstream_sct_neuro_peer_data_t *r
             ngx_spinlock_unlock(&block->lock);
             continue;
         }
-
         peer->cnt_requests = block->nreq;
         peer->cnt_responses = block->nres;
 
@@ -675,11 +685,36 @@ ngx_http_upstream_get_peer_from_neuro(ngx_http_upstream_sct_neuro_peer_data_t *r
         nreq_since_last_weight_update++;
     }
     if (nreq_since_last_weight_update == 0) {
+        int cnt_req_and_res[rrp->peers->number * 2];
+
+        ngx_spinlock(&block->lock, ngx_pid, 1024);
+        for (peer = rrp->peers->peer, i = 0;
+            peer;
+            peer = peer->next, i += 2)
+        {
+            cnt_req_and_res[i] = peer->cnt_requests;
+            cnt_req_and_res[i + 1] = peer->cnt_responses;
+        }
+
+        host = gethostbyname("recalculator");
+        sock = socket(AF_INET, SOCK_STREAM, 0);
+        memset(&server, 0, sizeof(server));
+        server.sin_family = AF_INET;
+        server.sin_port = htons(7998);
+        memcpy(&server.sin_addr.s_addr, host->h_addr_list[0], host->h_length);
+        connect(sock, (struct sockaddr *)&server, sizeof(server));
+        uint32_t len = htonl(sizeof(cnt_req_and_res));
+        send(sock, &len, sizeof(len), 0);
+        send(sock, cnt_req_and_res, sizeof(cnt_req_and_res), 0);
+        int response[rrp->peers->number];
+        recv(sock, response, sizeof(response), 0);
+        ngx_spinlock_unlock(&block->lock);
+        
         for (peer = rrp->peers->peer, i = 0;
             peer;
             peer = peer->next, i++)
         {
-            peer->neuro_weight = drand48();
+            peer->neuro_weight = response[i];
         }
     }  
 
