@@ -694,7 +694,7 @@ ngx_http_upstream_get_peer_from_neuro(ngx_http_upstream_sct_neuro_peer_data_t *r
         {
             cnt_req_and_res[i] = peer->cnt_requests;
             cnt_req_and_res[i + 1] = peer->cnt_responses;
-            cnt_req_and_res[i + 2] = peer->neuro_weight;
+            cnt_req_and_res[i + 2] = (int) peer->neuro_weight;
         }
 
         host = gethostbyname("recalculator");
