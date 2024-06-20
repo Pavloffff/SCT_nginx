@@ -218,6 +218,6 @@ if __name__ == "__main__":
     logger.info("Initializing model")
     test_model = TD3(200, 100, 100)
     logger.info("Loading model")
-    test_model.load("./weights/TD3_NGinxEnv_0")
+    test_model.load("./weights/TD3_NGinxEnv_324234")
     logger.info("Server started")
     asyncio.run(main())
