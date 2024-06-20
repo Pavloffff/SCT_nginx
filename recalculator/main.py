@@ -195,8 +195,8 @@ async def handler(reader, writer):
     observation = np.frombuffer(data, dtype=np.int32)
     logger.info(f"Converted observation: {observation}")
     
-    cnt_servers = len(observation) // 2
-    action = test_model.select_action(np.array(translate_neuro_weights(observation, 200)))
+    cnt_servers = len(observation) // 3
+    action = test_model.select_action(np.array(translate_neuro_weights(observation, 15)))
     processed_data = translate_neuro_weights(action, cnt_servers)
     logger.info(f"Processed data: {processed_data}")
     
