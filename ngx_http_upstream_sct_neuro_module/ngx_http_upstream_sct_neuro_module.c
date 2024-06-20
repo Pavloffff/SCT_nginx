@@ -704,8 +704,7 @@ ngx_http_upstream_get_peer_from_neuro(ngx_http_upstream_sct_neuro_peer_data_t *r
         server.sin_port = htons(7998);
         memcpy(&server.sin_addr.s_addr, host->h_addr_list[0], host->h_length);
         connect(sock, (struct sockaddr *)&server, sizeof(server));
-        // uint32_t len = htonl(sizeof(cnt_req_and_res)); TODO: вернуть
-        uint32_t len =  15;
+        uint32_t len = htonl(sizeof(cnt_req_and_res));
         send(sock, &len, sizeof(len), 0);
         send(sock, cnt_req_and_res, sizeof(cnt_req_and_res), 0);
         int response[rrp->peers->number];
