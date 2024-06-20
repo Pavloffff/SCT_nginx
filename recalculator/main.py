@@ -216,7 +216,7 @@ async def main():
 
 if __name__ == "__main__":
     logger.info("Initializing model")
-    test_model = TD3(200, 100, 100)
+    test_model = TD3(15, 5, 20)
     logger.info("Loading model")
     test_model.load("./weights/TD3_NGinxEnv_324234")
     logger.info("Server started")
