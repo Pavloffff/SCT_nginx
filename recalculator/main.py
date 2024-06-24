@@ -195,8 +195,8 @@ async def handler(reader, writer):
     observation = np.frombuffer(data, dtype=np.int32)
     logger.info(f"Converted observation: {observation}")
     
-    cnt_servers = len(observation) // 3
-    action = test_model.select_action(np.array(translate_neuro_weights(observation, 15)))
+    cnt_servers = len(observation) // 2
+    action = test_model.select_action(np.array(translate_neuro_weights(observation, 200)))
     processed_data = translate_neuro_weights(action, cnt_servers)
     logger.info(f"Processed data: {processed_data}")
     
@@ -216,8 +216,8 @@ async def main():
 
 if __name__ == "__main__":
     logger.info("Initializing model")
-    test_model = TD3(15, 5, 20)
+    test_model = TD3(200, 100, 100)
     logger.info("Loading model")
-    test_model.load("./weights/TD3_NGinxEnv_324234")
+    test_model.load("./weights/TD3_NGinxEnv_0")
     logger.info("Server started")
     asyncio.run(main())
