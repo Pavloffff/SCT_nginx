@@ -601,7 +601,7 @@ failed:
 static ngx_stream_upstream_sct_neuro_peer_t *
 ngx_stream_upstream_get_peer_from_neuro(ngx_stream_upstream_sct_neuro_peer_data_t *rrp)
 {
-    int                                     sock, flag;
+    int                                     sock;
     time_t                                  now;
     struct sockaddr_in                      server;
     ngx_uint_t                              i, num_blocks;
@@ -714,24 +714,12 @@ ngx_stream_upstream_get_peer_from_neuro(ngx_stream_upstream_sct_neuro_peer_data_
     }  
 
     // choose best peer
-    flag = 0;
     for (peer = rrp->peers->peer, i = 0;
          peer;
          peer = peer->next, i++)
     {
-        if (peer->cnt_requests + peer->cnt_responses < best->cnt_requests + best->cnt_responses) {
+        if ((peer->cnt_requests + peer->cnt_responses < best->cnt_requests + best->cnt_responses) || peer->neuro_weight > best->neuro_weight) {
             best = peer;
-            flag = 1;
-        }
-    }
-    if (!flag) {
-        for (peer = rrp->peers->peer, i = 0;
-            peer;
-            peer = peer->next, i++)
-        {
-            if (peer->neuro_weight > best->neuro_weight) {
-                best = peer;
-            }
         }
     }
 
